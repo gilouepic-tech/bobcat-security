@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dispatch — Bobcat</title>
+  <link rel="stylesheet" href="/css/style.css?v=1">
+</head>
+<body>
+  <%- include('partials/topbar', { user }) %>
+
+  <div class="container">
+    <% if (flashError && flashError.length) { %><div class="alert error"><%= flashError[0] %></div><% } %>
+    <% if (flashSuccess && flashSuccess.length) { %><div class="alert success"><%= flashSuccess[0] %></div><% } %>
+
+    <% if (user && user.isAdmin) { %>
+    <div class="card">
+      <h2>Groupes</h2>
+      <form class="actions" method="POST" action="/dispatch/group">
+        <input type="hidden" name="op" value="create">
+        <select name="type" required>
+          <option value="assistance">Assistance</option>
+          <option value="blinde">Blindé</option>
+        </select>
+        <input type="text" name="name" placeholder="Nom du groupe (ex: Assistance A)">
+        <button class="btn">Créer</button>
+      </form>
+    </div>
+    <% } %>
+
+    <div class="card">
+      <h2>Agents en service</h2>
+      <ul class="agents">
+        <% if (!(enService && enService.length)) { %><li class="muted">Aucun agent en service.</li><% } %>
+        <% (enService || []).forEach(a => { %>
+          <li class="agent">
+            <% if (a.avatar) { %><img src="/uploads/<%= a.avatar %>" class="avatar" alt="Avatar"><% } else { %><div class="avatar placeholder"></div><% } %>
+            <div>
+              <strong><%= a.nomRP %></strong> — <span class="muted"><%= a.matricule %></span>
+              <% if (a.zone) { %> <span class="badge warn">Zone: <%= a.zone %></span> <% } %>
+              <% if (a.typeMission) { %> <span class="badge"><%= a.typeMission %></span> <% } %>
+            </div>
+          </li>
+        <% }) %>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Groupes actifs</h2>
+      <div class="table">
+        <div class="row head">
+          <div>Groupe</div>
+          <div>Type</div>
+          <div>Membres</div>
+          <% if (user && user.isAdmin) { %><div class="right">Actions</div><% } %>
+        </div>
+
+        <% (groups || []).forEach(g => {
+             const members = JSON.parse(g.members || '[]').filter(m => m && m.userId);
+        %>
+          <div class="row">
+            <div><strong><%= g.name %></strong></div>
+            <div><span class="badge"><%= g.type %></span></div>
+            <div>
+              <% if (!members.length) { %>
+                <span class="muted">Aucun</span>
+              <% } else { %>
+                <ul class="agents">
+                  <% members.forEach(m => { %>
+                    <li class="agent">
+                      <div class="avatar tiny"></div>
+                      <div><%= m.nomRP %> — <span class="muted"><%= m.matricule %></span></div>
+                      <% if (user && user.isAdmin) { %>
+                        <form method="POST" action="/dispatch/assign" style="margin-left:auto">
+                          <input type="hidden" name="op" value="remove">
+                          <input type="hidden" name="groupId" value="<%= g.id %>">
+                          <input type="hidden" name="userId" value="<%= m.userId %>">
+                          <button class="btn small danger">Retirer</button>
+                        </form>
+                      <% } %>
+                    </li>
+                  <% }) %>
+                </ul>
+              <% } %>
+
+              <% if (user && user.isAdmin && (enService || []).length) { %>
+                <form class="actions" method="POST" action="/dispatch/assign">
+                  <input type="hidden" name="op" value="add">
+                  <input type="hidden" name="groupId" value="<%= g.id %>">
+                  <select name="userId">
+                    <% enService.forEach(a => { %>
+                      <option value="<%= a.id %>"><%= a.nomRP %> — <%= a.matricule %></option>
+                    <% }) %>
+                  </select>
+                  <button class="btn small">Ajouter</button>
+                </form>
+              <% } %>
+            </div>
+
+            <% if (user && user.isAdmin) { %>
+              <div class="right">
+                <form method="POST" action="/dispatch/group" class="actions" style="justify-content:flex-end">
+                  <input type="hidden" name="op" value="rename">
+                  <input type="hidden" name="groupId" value="<%= g.id %>">
+                  <input type="text" name="name" placeholder="Nouveau nom">
+                  <button class="btn small">Renommer</button>
+                </form>
+                <form method="POST" action="/dispatch/group" onsubmit="return confirm('Supprimer ce groupe ?')" style="margin-top:8px; text-align:right">
+                  <input type="hidden" name="op" value="delete">
+                  <input type="hidden" name="groupId" value="<%= g.id %>">
+                  <button class="btn small danger">Supprimer</button>
+                </form>
+              </div>
+            <% } %>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Zones</h2>
+      <div class="table cols-5">
+        <div class="row head">
+          <div>Agent</div>
+          <div>Matricule</div>
+          <div>Zone</div>
+          <div>Nouvelle zone</div>
+          <div class="right">Actions</div>
+        </div>
+        <% (allUsers || []).forEach(u => { %>
+          <div class="row">
+            <div><%= u.nomRP %></div>
+            <div><%= u.matricule %></div>
+            <div><span class="badge warn"><%= u.zone || '-' %></span></div>
+            <div>
+              <form class="actions" method="POST" action="/dispatch/zone">
+                <input type="hidden" name="userId" value="<%= u.id %>">
+                <input type="text" name="zone" placeholder="Zone (ex: Nord A)">
+            </div>
+            <div class="right">
+                <button class="btn small">Enregistrer</button>
+              </form>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

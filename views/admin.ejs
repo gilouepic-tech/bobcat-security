@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin — Bobcat</title>
+  <link rel="stylesheet" href="/css/style.css?v=1">
+</head>
+<body>
+  <%- include('partials/topbar', { user }) %>
+<form method="GET" action="/admin" class="actions" style="margin-bottom:10px;">
+  <input type="text" name="q" placeholder="Filtrer par matricule" value="<%= typeof q !== 'undefined' ? q : '' %>">
+  <button class="btn secondary" type="submit">Filtrer</button>
+  <a class="btn secondary" href="/admin">Réinitialiser</a>
+</form>
+
+
+  <div class="container">
+    <% if (flashError && flashError.length) { %><div class="alert error"><%= flashError[0] %></div><% } %>
+    <% if (flashSuccess && flashSuccess.length) { %><div class="alert success"><%= flashSuccess[0] %></div><% } %>
+
+    <div class="actions">
+      <a href="/admin/employes" class="btn">Employés (sanctions)</a>
+      <a href="/admin/heures" class="btn">Calculer les heures (semaine)</a>
+      <a href="/dispatch" class="btn secondary">Dispatch</a>
+    </div>
+
+    <div class="card">
+      <h2>Utilisateurs</h2>
+      <div class="table">
+        <div class="row head">
+          <div>Nom RP</div>
+          <div>Matricule</div>
+          <div>Statut</div>
+          <div>Mission</div>
+          <div class="right">Actions</div>
+        </div>
+
+        <% (users || []).forEach(u => { %>
+          <div class="row">
+            <div><%= u.nomRP %> <% if (u.isAdmin) { %><span class="badge">Admin</span><% } %></div>
+            <div><%= u.matricule %></div>
+            <div>
+              <% if (u.enService) { %>
+                <span class="badge <%= u.enPause ? 'warn' : 'success' %>"><%= u.enPause ? 'Pause' : 'En service' %></span>
+              <% } else { %>
+                <span class="badge off">Hors service</span>
+              <% } %>
+            </div>
+            <div><%= u.typeMission || '-' %></div>
+            <div class="right actions-col">
+              <form method="POST" action="/admin/action">
+                <input type="hidden" name="userId" value="<%= u.id %>">
+                <select name="typeMission">
+                  <option value="">— mission —</option>
+                  <option value="convoi">Convoi</option>
+                  <option value="securite_entreprise">Sécurité entreprise</option>
+                  <option value="securite_evenementielle">Sécurité événementielle</option>
+                </select>
+                <button class="btn small" name="action" value="changer_mission">Changer</button>
+                <button class="btn small warn" name="action" value="forcer_pause">Forcer pause</button>
+                <button class="btn small danger" name="action" value="forcer_fin">Forcer fin</button>
+                <button class="btn small danger" name="action" value="supprimer" onclick="return confirm('Supprimer l’utilisateur ?')">Supprimer</button>
+              </form>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

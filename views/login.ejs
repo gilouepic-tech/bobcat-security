@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connexion — Bobcat</title>
+  <link rel="stylesheet" href="/css/style.css?v=1">
+</head>
+<body class="page-centered">
+  <div class="card auth-card">
+    <img src="/images/logo-bobcat.png" class="logo" alt="Logo">
+    <h1 class="center">Connexion</h1>
+
+    <% if (flashError && flashError.length) { %><div class="alert error"><%= flashError[0] %></div><% } %>
+    <% if (flashSuccess && flashSuccess.length) { %><div class="alert success"><%= flashSuccess[0] %></div><% } %>
+
+    <form class="form" action="/login" method="POST">
+      <div>
+        <label for="identifiant">Identifiant</label>
+        <input id="identifiant" name="identifiant" type="text" required>
+      </div>
+      <div>
+        <label for="password">Mot de passe</label>
+        <input id="password" name="password" type="password" required>
+      </div>
+      <button class="btn block" type="submit">Se connecter</button>
+    </form>
+
+    <div class="spacer-16"></div>
+    <div class="center"><a class="btn secondary" href="/register">Créer un compte</a></div>
+  </div>
+</body>
+</html>

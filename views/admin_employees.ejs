@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Employés — Sanctions</title>
+  <link rel="stylesheet" href="/css/style.css?v=1" />
+  <style>
+    .tiny-row { display:grid; grid-template-columns: 1.4fr 1fr 1.2fr 1.6fr 1.2fr; gap:10px; padding:8px; border:1px solid var(--border); border-radius:10px; background:rgba(16,23,52,.5); align-items:center; }
+    .tiny-head { font-weight:600; background:rgba(16,23,52,.7); }
+    .inline { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .minutes { width:150px; }
+    .s-muted { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="left">
+      <img src="/images/logo-bobcat.png" class="logo-small" alt="Logo">
+      <strong>Bobcat Security</strong>
+    </div>
+    <div class="right">
+      <a href="/admin" class="btn secondary">Retour Admin</a>
+      <a href="/dispatch" class="btn secondary">Dispatch</a>
+      <a href="/logout" class="btn secondary">Déconnexion</a>
+    </div>
+  </header>
+
+<form method="GET" action="/admin/employes" class="actions" style="margin-bottom:10px;">
+  <input type="text" name="q" placeholder="Filtrer par matricule" value="<%= typeof q !== 'undefined' ? q : '' %>">
+  <button class="btn secondary" type="submit">Filtrer</button>
+  <a class="btn secondary" href="/admin/employes">Réinitialiser</a>
+</form>
+
+  <main class="container">
+    <% if (flashError && flashError.length) { %><div class="alert error"><%= flashError[0] %></div><% } %>
+    <% if (flashSuccess && flashSuccess.length) { %><div class="alert success"><%= flashSuccess[0] %></div><% } %>
+
+    <section class="card">
+      <h2>Sanctions</h2>
+
+      <div class="tiny-row tiny-head">
+        <div>Nom RP</div>
+        <div>Matricule</div>
+        <div>Sanction active</div>
+        <div>Appliquer une sanction</div>
+        <div>Actions</div>
+      </div>
+
+      <% function fmt(m){ if(m==null) return '-'; m = parseInt(m||0,10); const h=Math.floor(m/60); const mm=String(m%60).padStart(2,'0'); return `${h}h ${mm}min`; } %>
+
+      <% (rows || []).forEach(r => { %>
+        <div class="tiny-row">
+          <div><%= r.nomRP %></div>
+          <div><%= r.matricule %></div>
+
+          <div>
+            <% if (r.sanction_type) { %>
+              <strong><%= r.sanction_type %></strong>
+              <% if (r.sanction_type === 'blame1' || r.sanction_type === 'blame2') { %>
+                <div class="s-muted">Requis: <%= fmt(r.required_minutes) %></div>
+                <div class="s-muted">Fait: <%= fmt(r.worked_minutes) %></div>
+                <div class="s-muted">Reste: <%= fmt(r.remaining_minutes) %></div>
+              <% } else if (r.sanction_type === 'suspension') { %>
+                <div class="s-muted">Suspendu (pas de prise de service)</div>
+              <% } else if (r.sanction_type === 'rappel') { %>
+                <div class="s-muted">Rappel à l'ordre</div>
+              <% } %>
+            <% } else { %>
+              <span class="s-muted">Aucune</span>
+            <% } %>
+          </div>
+
+          <div>
+            <form class="inline" method="POST" action="/admin/sanction">
+              <input type="hidden" name="userId" value="<%= r.id %>"/>
+              <select name="type" required>
+                <option value="">-- sanction --</option>
+                <option value="rappel">Rappel à l'ordre</option>
+                <option value="blame1">Premier blâme</option>
+                <option value="blame2">Deuxième blâme</option>
+                <option value="suspension">Suspension</option>
+              </select>
+              <!-- minutes (entier) pour blâmes -->
+              <input class="minutes" type="number" min="0" name="requiredMinutes" placeholder="Minutes (si blâme)"/>
+              <button class="btn" name="action" value="apply">Appliquer</button>
+            </form>
+          </div>
+
+          <div>
+            <form method="POST" action="/admin/sanction" onsubmit="return confirm('Lever la sanction active ?');">
+              <input type="hidden" name="userId" value="<%= r.id %>"/>
+              <button class="btn secondary" name="action" value="clear">Lever</button>
+            </form>
+          </div>
+        </div>
+      <% }) %>
+    </section>
+  </main>
+</body>
+</html>

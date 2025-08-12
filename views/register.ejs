@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inscription — Bobcat</title>
+  <link rel="stylesheet" href="/css/style.css?v=1">
+</head>
+<body class="page-centered">
+  <div class="card auth-card">
+    <img src="/images/logo-bobcat.png" class="logo" alt="Logo">
+    <h1 class="center">Création de compte</h1>
+
+    <% if (flashError && flashError.length) { %><div class="alert error"><%= flashError[0] %></div><% } %>
+    <% if (flashSuccess && flashSuccess.length) { %><div class="alert success"><%= flashSuccess[0] %></div><% } %>
+
+    <form class="form" action="/register" method="POST" enctype="multipart/form-data">
+      <div>
+        <label for="identifiant">Identifiant</label>
+        <input id="identifiant" name="identifiant" type="text" required>
+      </div>
+
+      <div>
+        <label for="nomRP">Nom RP</label>
+        <input id="nomRP" name="nomRP" type="text" required>
+      </div>
+
+      <div>
+        <label for="matricule">Matricule</label>
+        <input id="matricule" name="matricule" type="text" required>
+      </div>
+
+      <div>
+        <label for="password">Mot de passe (min 6 caractères)</label>
+        <input id="password" name="password" type="password" required minlength="6">
+      </div>
+
+      <div class="file">
+        <label for="avatar">Avatar (PNG/JPG)</label>
+        <input id="avatar" name="avatar" type="file" accept="image/png,image/jpeg">
+      </div>
+
+      <button class="btn block" type="submit">Créer le compte</button>
+    </form>
+
+    <div class="spacer-16"></div>
+    <div class="center"><a class="btn secondary" href="/login">Retour connexion</a></div>
+  </div>
+</body>
+</html>

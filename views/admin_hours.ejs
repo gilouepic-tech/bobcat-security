@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Heures semaine — Bobcat</title>
+  <link rel="stylesheet" href="/css/style.css?v=1">
+</head>
+<body>
+  <%- include('partials/topbar', { user }) %>
+
+  <div class="container">
+    <div class="card">
+      <h2>Heures effectuées — semaine en cours</h2>
+      <div class="table cols-3">
+        <div class="row head">
+          <div>Nom RP</div>
+          <div>Matricule</div>
+          <div>Heures</div>
+        </div>
+        <% (rows || []).forEach(r => { %>
+          <div class="row">
+            <div><%= r.nomRP %></div>
+            <div><%= r.matricule %></div>
+            <div><strong><%= r.heures %></strong></div>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+<form method="POST" action="/admin/heures/reset" class="actions" onsubmit="return confirm('Confirmer la remise à zéro ?');">
+  <select name="scope">
+    <option value="week">Cette semaine uniquement</option>
+    <option value="all">Tout l’historique</option>
+  </select>
+  <button class="btn danger" type="submit">Remettre à zéro</button>
+</form>

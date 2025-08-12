@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — Bobcat</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+</head>
+<body>
+  <%- include('partials/topbar', { user }) %>
+
+  <div class="container">
+    <% if (flashError && flashError.length) { %><div class="alert error"><%= flashError[0] %></div><% } %>
+    <% if (flashSuccess && flashSuccess.length) { %><div class="alert success"><%= flashSuccess[0] %></div><% } %>
+
+    <div class="card">
+      <h2>Mes actions</h2>
+      <form class="actions" action="/service/action" method="POST">
+        <select name="typeMission" title="Type de mission">
+          <option value="">— Type de mission —</option>
+          <option value="convoi">Convoi</option>
+          <option value="securite_entreprise">Sécurité entreprise</option>
+          <option value="securite_evenementielle">Sécurité événementielle</option>
+        </select>
+        <button class="btn" name="action" value="prendre">Prendre service</button>
+        <button class="btn warn" name="action" value="pause">Pause</button>
+        <button class="btn success" name="action" value="reprendre">Fin de pause</button>
+        <button class="btn danger" name="action" value="finir">Fin de service</button>
+      </form>
+
+      <div class="spacer-12"></div>
+      <h3>Mon statut</h3>
+      <form class="actions" action="/service/status" method="POST">
+        <select name="status">
+          <option value="disponible">🟢 Disponible</option>
+          <option value="intervention">🟡 En intervention</option>
+          <option value="occupe">🔴 Occupé</option>
+        </select>
+        <button class="btn" type="submit">Mettre à jour</button>
+      </form>
+
+      <div class="spacer-12"></div>
+      <h3>Alerte rapide</h3>
+      <% if (user && user.isAdmin) { %>
+        <form class="actions" action="/alert" method="POST">
+          <input type="text" name="message" placeholder="Message (optionnel)">
+          <button class="btn danger" type="submit">🚨 Envoyer une alerte</button>
+        </form>
+      <% } else { %>
+        <p class="muted">Seuls les administrateurs peuvent envoyer une alerte.</p>
+      <% } %>
+    </div>
+
+    <div class="card">
+      <h2>Agents en service</h2>
+      <ul class="agents">
+        <% if (!usersEnService || usersEnService.length === 0) { %>
+          <li class="muted">Aucun agent en service.</li>
+        <% } %>
+        <% (usersEnService || []).forEach(a => { %>
+          <li class="agent">
+            <% if (a.avatar) { %>
+              <img src="/uploads/<%= a.avatar %>" class="avatar" alt="Avatar">
+            <% } else { %>
+              <div class="avatar placeholder"></div>
+            <% } %>
+            <div>
+              <strong><%= a.nomRP %></strong> — <span class="muted"><%= a.matricule %></span><br>
+              <span class="badge <%= a.enPause ? 'warn' : 'success' %>"><%= a.enPause ? 'En pause' : 'En service' %></span>
+              <% if (a.typeMission) { %> <span class="badge"><%= a.typeMission %></span> <% } %>
+              <% if (a.zone) { %> <span class="badge warn">Zone: <%= a.zone %></span> <% } %>
+              <% if (a.opStatus) { %>
+                <span class="badge <%= a.opStatus==='occupe' ? 'danger' : (a.opStatus==='intervention' ? 'warn' : 'success') %>">
+                  <%= a.opStatus %>
+                </span>
+              <% } %>
+            </div>
+          </li>
+        <% }) %>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
