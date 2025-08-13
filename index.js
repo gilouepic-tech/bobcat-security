@@ -1,510 +1,420 @@
-// index.js — Bobcat Security (ReadyToPaste, corrections sanctions/suppressions)
-const express = require('express');
-const path = require('path');
-const fs = require('fs');
-const session = require('express-session');
-const flash = require('connect-flash');
-const multer = require('multer');
+// utils/db.js
+const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
-const { body, validationResult } = require('express-validator');
 
-const db = require('./utils/db');
+const db = new sqlite3.Database('data.sqlite');
 
-const app = express();
-
-// ====== VIEW + STATIC ======
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json()); // pour AJAX JSON (ex: /alert)
-
-// ====== SESSION + FLASH ======
-app.use(session({
-  secret: 'bobcat_super_secret_2025',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { maxAge: 1000 * 60 * 60 * 12 }
-}));
-app.use(flash());
-
-app.use((req, res, next) => {
-  res.locals.flashError = req.flash('error');
-  res.locals.flashSuccess = req.flash('success');
-  res.locals.user = req.session.user || null;
-  next();
-});
-
-// ====== UPLOAD AVATAR ======
-const storage = multer.diskStorage({
-  destination: (req, file, cb) =>
-    cb(null, path.join(__dirname, 'public', 'uploads')),
-  filename: (req, file, cb) => {
-    const name = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = (file.originalname.split('.').pop() || 'png').toLowerCase();
-    cb(null, `${name}.${ext}`);
-  }
-});
-const upload = multer({
-  storage,
-  limits: { fileSize: 2 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const ok = /image\/png|image\/jpeg/.test(file.mimetype || '');
-    cb(ok ? null : new Error('Format image non supporté (PNG/JPG uniquement)'), ok);
-  }
-});
-
-// ====== HELPERS AUTH ======
-function checkAuth(req, res, next) {
-  if (!req.session.user) {
-    req.flash('error', 'Veuillez vous connecter.');
-    return res.redirect('/login');
-  }
-  next();
+function run(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) { if (err) reject(err); else resolve(this); });
+  });
 }
-function checkAdmin(req, res, next) {
-  if (!req.session.user || !req.session.user.isAdmin) {
-    req.flash('error', 'Accès administrateur requis.');
-    return res.redirect('/dashboard');
-  }
-  next();
+function get(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => { if (err) reject(err); else resolve(row); });
+  });
+}
+function all(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => { if (err) reject(err); else resolve(rows); });
+  });
 }
 
-// ====== ROUTES AUTH ======
-app.get('/', (req, res) =>
-  res.redirect(req.session.user ? '/dashboard' : '/login')
-);
-
-app.get('/login', (req, res) => {
-  if (req.session.user) return res.redirect('/dashboard');
-  res.render('login');
-});
-
-app.post(
-  '/login',
-  body('identifiant').trim().notEmpty(),
-  body('password').isLength({ min: 1 }),
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      req.flash('error', 'Identifiants invalides.');
-      return res.redirect('/login');
-    }
-    try {
-      const { identifiant, password } = req.body;
-      const user = await db.getUserByIdentifiant(identifiant.trim());
-      if (!user) {
-        req.flash('error', 'Identifiant ou mot de passe incorrect.');
-        return res.redirect('/login');
-      }
-      const ok = await bcrypt.compare(password, user.password);
-      if (!ok) {
-        req.flash('error', 'Identifiant ou mot de passe incorrect.');
-        return res.redirect('/login');
-      }
-      req.session.user = {
-        id: user.id,
-        identifiant: user.identifiant,
-        nomRP: user.nomRP,
-        matricule: user.matricule,
-        isAdmin: !!user.isAdmin
-      };
-      req.flash('success', 'Connexion réussie.');
-      res.redirect('/dashboard');
-    } catch (e) {
-      console.error('[LOGIN ERROR]', e);
-      req.flash('error', 'Erreur serveur.');
-      res.redirect('/login');
-    }
+// ---------- Migrations sûres ----------
+async function safeAddColumn(table, columnDef) {
+  const colName = columnDef.trim().split(/\s+/, 1)[0];
+  const cols = await all(`PRAGMA table_info(${table})`);
+  const exists = cols.some(c => String(c.name).toLowerCase() === colName.toLowerCase());
+  if (!exists) {
+    await run(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`);
   }
-);
-
-app.get('/register', (req, res) => {
-  if (req.session.user) return res.redirect('/dashboard');
-  res.render('register');
-});
-
-app.post(
-  '/register',
-  upload.single('avatar'),
-  body('identifiant').trim().notEmpty(),
-  body('nomRP').trim().notEmpty(),
-  body('matricule').trim().notEmpty(),
-  body('password').isLength({ min: 6 }),
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      if (req.file) {
-        try { fs.unlinkSync(req.file.path); } catch (_) {}
-      }
-      req.flash('error', 'Vérifiez les champs (mot de passe ≥ 6).');
-      return res.redirect('/register');
-    }
-    try {
-      const { identifiant, nomRP, matricule, password } = req.body;
-      const exists = await db.getUserByIdentifiant(identifiant.trim());
-      if (exists) {
-        if (req.file) {
-          try { fs.unlinkSync(req.file.path); } catch (_) {}
-        }
-        req.flash('error', 'Identifiant déjà utilisé.');
-        return res.redirect('/register');
-      }
-      const hash = await bcrypt.hash(password, 10);
-      await db.createUser({
-        identifiant: identifiant.trim(),
-        nomRP: nomRP.trim(),
-        matricule: matricule.trim(),
-        password: hash,
-        avatar: req.file ? path.basename(req.file.path) : null
-      });
-      req.flash('success', 'Compte créé. Vous pouvez vous connecter.');
-      res.redirect('/login');
-    } catch (e) {
-      console.error('[REGISTER ERROR]', e);
-      req.flash('error', 'Erreur serveur.');
-      res.redirect('/register');
-    }
-  }
-);
-
-app.get('/logout', (req, res) => {
-  req.session.destroy(() => res.redirect('/login'));
-});
-
-// ====== DASHBOARD ======
-app.get('/dashboard', checkAuth, async (req, res) => {
-  try {
-    const usersEnService = await db.getUsersEnService();
-    res.render('dashboard', { usersEnService });
-  } catch (e) {
-    console.error('[DASHBOARD ERROR]', e);
-    req.flash('error', 'Erreur chargement dashboard.');
-    res.redirect('/login');
-  }
-});
-
-app.post('/service/action', checkAuth, async (req, res) => {
-  try {
-    const { action, typeMission } = req.body;
-    const userId = req.session.user.id;
-
-    if (action === 'prendre') {
-      const suspended = await db.isSuspended(userId);
-      if (suspended) {
-        req.flash('error', 'Vous êtes suspendu, prise de service impossible.');
-        return res.redirect('/dashboard');
-      }
-      await db.startService(userId, typeMission || null);
-      req.flash('success', 'Service démarré.');
-    } else if (action === 'pause') {
-      await db.pauseService(userId);
-      req.flash('success', 'Pause démarrée.');
-    } else if (action === 'reprendre') {
-      await db.resumeService(userId);
-      req.flash('success', 'Pause terminée.');
-    } else if (action === 'finir') {
-      await db.endService(userId);
-      req.flash('success', 'Fin de service.');
-    }
-    res.redirect('/dashboard');
-  } catch (e) {
-    console.error('[SERVICE ACTION ERROR]', e);
-    req.flash('error', 'Action impossible.');
-    res.redirect('/dashboard');
-  }
-});
-
-// Changer le statut (disponible/intervention/occupé)
-app.post('/service/status', checkAuth, async (req, res) => {
-  try {
-    const { status } = req.body;
-    await db.setOpStatus(req.session.user.id, status);
-    req.flash('success', 'Statut mis à jour.');
-  } catch (e) {
-    console.error('[STATUS ERROR]', e);
-    req.flash('error', 'Impossible de changer le statut.');
-  }
-  res.redirect('/dashboard');
-});
-
-// ====== ADMIN ======
-app.get('/admin', checkAdmin, async (req, res) => {
-  try {
-    const q = (req.query && req.query.q) ? String(req.query.q).trim() : '';
-    const users = q ? await db.searchUsersByMatricule(q) : await db.getAllUsers();
-    res.render('admin', { users, q });
-  } catch (e) {
-    console.error('[ADMIN PAGE ERROR]', e);
-    req.flash('error', 'Erreur chargement admin.');
-    res.redirect('/dashboard');
-  }
-});
-
-app.get('/admin/employes', checkAdmin, async (req, res) => {
-  try {
-    const q = (req.query && req.query.q) ? String(req.query.q).trim() : '';
-    const rows = q ? await db.getEmployeesCompactByMatricule(q) : await db.getEmployeesCompact();
-    res.render('admin_employees', { rows, q });
-  } catch (e) {
-    console.error('[EMPLOYES PAGE ERROR]', e);
-    req.flash('error', 'Erreur chargement employés.');
-    res.redirect('/admin');
-  }
-});
-
-app.get('/admin/heures', checkAdmin, async (req, res) => {
-  try {
-    const rows = await db.getWeeklyMinutesThisWeek();
-    const display = rows.map(r => {
-      const h = Math.floor(r.minutes / 60);
-      const m = r.minutes % 60;
-      return { nomRP: r.nomRP, matricule: r.matricule, heures: `${h}h ${String(m).padStart(2, '0')}min` };
-    });
-    res.render('admin_hours', { rows: display });
-  } catch (e) {
-    console.error('[HEURES PAGE ERROR]', e);
-    req.flash('error', 'Erreur calcul heures.');
-    res.redirect('/admin');
-  }
-});
-
-// --- SUPPRESSION UTILISATEUR (robuste)
-function extractUserId(body) {
-  return Number(body.userId || body.id || body.uid || body.user_id);
 }
-app.post(
-  ['/admin/user/delete', '/admin/delete', '/admin/supprimer', '/admin/action/delete'],
-  checkAdmin,
-  async (req, res) => {
+
+// ---------- INIT & MIGRATIONS ----------
+async function migrate() {
+  await run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    identifiant TEXT UNIQUE NOT NULL,
+    nomRP TEXT NOT NULL,
+    matricule TEXT NOT NULL,
+    password TEXT NOT NULL,
+    avatar TEXT,
+    isAdmin INTEGER DEFAULT 0
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS service_status (
+    userId INTEGER PRIMARY KEY,
+    enService INTEGER DEFAULT 0,
+    enPause INTEGER DEFAULT 0,
+    typeMission TEXT DEFAULT NULL,
+    zone TEXT DEFAULT NULL,
+    opStatus TEXT DEFAULT "disponible",
+    FOREIGN KEY(userId) REFERENCES users(id)
+  )`);
+  await safeAddColumn('service_status', 'zone TEXT DEFAULT NULL');
+  await safeAddColumn('service_status', 'opStatus TEXT DEFAULT "disponible"');
+
+  await run(`CREATE TABLE IF NOT EXISTS service_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId INTEGER NOT NULL,
+    mission_type TEXT,
+    start_time TEXT NOT NULL,
+    end_time TEXT,
+    FOREIGN KEY(userId) REFERENCES users(id)
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS service_pauses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    logId INTEGER NOT NULL,
+    pause_start TEXT NOT NULL,
+    pause_end TEXT,
+    FOREIGN KEY(logId) REFERENCES service_logs(id)
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS sanctions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId INTEGER NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('rappel','blame1','blame2','suspension')),
+    active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY(userId) REFERENCES users(id)
+  )`);
+  await safeAddColumn('sanctions', 'required_hours REAL');
+  await safeAddColumn('sanctions', 'worked_hours REAL DEFAULT 0');
+  await safeAddColumn('sanctions', 'required_minutes INTEGER');
+  await safeAddColumn('sanctions', 'worked_minutes INTEGER DEFAULT 0');
+
+  await run(`UPDATE sanctions
+             SET required_minutes = CAST(required_hours * 60 AS INTEGER)
+           WHERE required_minutes IS NULL AND required_hours IS NOT NULL`);
+  await run(`UPDATE sanctions
+             SET worked_minutes = CAST(worked_hours * 60 AS INTEGER)
+           WHERE (worked_minutes IS NULL OR worked_minutes = 0) AND worked_hours IS NOT NULL`);
+
+  await run(`CREATE TABLE IF NOT EXISTS dispatch_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('assistance','blinde'))
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS dispatch_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    groupId INTEGER NOT NULL,
+    userId INTEGER NOT NULL,
+    UNIQUE(groupId, userId),
+    FOREIGN KEY(groupId) REFERENCES dispatch_groups(id),
+    FOREIGN KEY(userId) REFERENCES users(id)
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId INTEGER NOT NULL,
+    message TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    closed_at TEXT,
+    FOREIGN KEY(userId) REFERENCES users(id)
+  )`);
+
+  const admin = await get('SELECT id FROM users WHERE identifiant=?', ['admin']);
+  if (!admin) {
+    const hash = await bcrypt.hash('Bobcat2025Bob', 10);
+    await run(`INSERT INTO users (identifiant, nomRP, matricule, password, avatar, isAdmin)
+               VALUES (?,?,?,?,?,1)`, ['admin','Admin Bobcat','ADM-001',hash,null]);
+    const row = await get('SELECT id FROM users WHERE identifiant=?', ['admin']);
+    await run(`INSERT OR IGNORE INTO service_status
+               (userId,enService,enPause,typeMission,zone,opStatus) VALUES (?,?,?,?,?,?)`,
+               [row.id,0,0,null,null,'disponible']);
+    console.log('[DB] Admin initial créé (admin / Bobcat2025Bob)');
+  }
+}
+migrate().catch(console.error);
+
+// ---------- Utilitaires temps ----------
+async function durationMinutes(start, end) {
+  const r = await get(`SELECT CAST((julianday(?) - julianday(?)) * 24 * 60 AS INTEGER) AS m`, [end, start]);
+  return r?.m || 0;
+}
+async function pauseMinutesForLog(logId) {
+  const r = await get(`SELECT COALESCE(SUM((julianday(pause_end)-julianday(pause_start))*24*60),0) AS m
+                       FROM service_pauses WHERE logId=? AND pause_end IS NOT NULL`, [logId]);
+  return r?.m || 0;
+}
+
+// ---------- EXPORTS ----------
+module.exports = {
+  // Users
+  getUserByIdentifiant(identifiant){ return get('SELECT * FROM users WHERE identifiant=?',[identifiant]); },
+  async createUser({ identifiant, nomRP, matricule, password, avatar }) {
+    const res = await run('INSERT INTO users (identifiant,nomRP,matricule,password,avatar,isAdmin) VALUES (?,?,?,?,?,0)',
+      [identifiant, nomRP, matricule, password, avatar]);
+    await run('INSERT OR IGNORE INTO service_status (userId,enService,enPause,typeMission,zone,opStatus) VALUES (?,?,?,?,?,?)',
+      [res.lastID,0,0,null,null,'disponible']);
+    return res;
+  },
+  getAllUsers(){
+    return all(`SELECT u.*, s.enService, s.enPause, s.typeMission, s.zone, s.opStatus
+                FROM users u LEFT JOIN service_status s ON u.id=s.userId
+                ORDER BY u.isAdmin DESC, u.nomRP ASC`);
+  },
+
+  // Liste live
+  getUsersEnService(){
+    return all(`SELECT u.id,u.identifiant,u.nomRP,u.matricule,u.avatar,
+                       s.enService,s.enPause,s.typeMission,s.zone,s.opStatus
+                FROM users u JOIN service_status s ON u.id=s.userId
+                WHERE s.enService=1
+                ORDER BY u.nomRP ASC`);
+  },
+
+  // Logs & pauses
+  getActiveLog(userId){
+    return get('SELECT * FROM service_logs WHERE userId=? AND end_time IS NULL ORDER BY id DESC LIMIT 1', [Number(userId)]);
+  },
+  async startService(userId, mission){
+    await run(`INSERT INTO service_status (userId,enService,enPause,typeMission)
+               VALUES (?,?,?,?)
+               ON CONFLICT(userId) DO UPDATE SET enService=1,enPause=0,typeMission=excluded.typeMission`,
+               [Number(userId),1,0,mission]);
+    const open = await this.getActiveLog(userId);
+    if (!open) {
+      await run('INSERT INTO service_logs (userId,mission_type,start_time) VALUES (?,?,datetime("now","localtime"))',
+                [Number(userId), mission]);
+    }
+  },
+  async pauseService(userId){
+    const log = await this.getActiveLog(userId);
+    if (!log) return;
+    const openPause = await get('SELECT id FROM service_pauses WHERE logId=? AND pause_end IS NULL ORDER BY id DESC LIMIT 1',[log.id]);
+    if (openPause) return;
+    await run('INSERT INTO service_pauses (logId,pause_start) VALUES (?, datetime("now","localtime"))',[log.id]);
+    await run('UPDATE service_status SET enPause=1 WHERE userId=?',[Number(userId)]);
+  },
+  async resumeService(userId){
+    const log = await this.getActiveLog(userId);
+    if (!log) return;
+    const openPause = await get('SELECT id FROM service_pauses WHERE logId=? AND pause_end IS NULL ORDER BY id DESC LIMIT 1',[log.id]);
+    if (!openPause) return;
+    await run('UPDATE service_pauses SET pause_end=datetime("now","localtime") WHERE id=?',[openPause.id]);
+    await run('UPDATE service_status SET enPause=0 WHERE userId=?',[Number(userId)]);
+  },
+  async endService(userId){
+    const log = await this.getActiveLog(userId);
+    if (log) {
+      const openPause = await get('SELECT id FROM service_pauses WHERE logId=? AND pause_end IS NULL ORDER BY id DESC LIMIT 1',[log.id]);
+      if (openPause) await run('UPDATE service_pauses SET pause_end=datetime("now","localtime") WHERE id=?',[openPause.id]);
+      await run('UPDATE service_logs SET end_time=datetime("now","localtime") WHERE id=?',[log.id]);
+
+      const fresh = await get('SELECT id,start_time,end_time FROM service_logs WHERE id=?',[log.id]);
+      if (fresh && fresh.end_time) {
+        const total = await durationMinutes(fresh.start_time, fresh.end_time);
+        const p = await pauseMinutesForLog(fresh.id);
+        const net = Math.max(0, total - p);
+        await this._applyWorkedMinutesToBlame(userId, net);
+      }
+    }
+    await run('UPDATE service_status SET enService=0,enPause=0,typeMission=NULL WHERE userId=?',[Number(userId)]);
+  },
+
+  // Sanctions (minutes exactes)
+  async isSuspended(userId){
+    const row = await get(`SELECT 1 FROM sanctions WHERE userId=? AND active=1 AND type='suspension'`,[Number(userId)]);
+    return !!row;
+  },
+  async setSanction(userId, type, requiredMinutes = null){
+    await run(`UPDATE sanctions SET active=0 WHERE userId=? AND active=1`,[Number(userId)]);
+    await run(`INSERT INTO sanctions (userId,type,required_minutes,worked_minutes,active)
+               VALUES (?,?,?,?,1)`,
+               [Number(userId), String(type),
+                requiredMinutes != null ? Math.max(0, parseInt(requiredMinutes,10)) : null, 0]);
+  },
+  async clearSanction(userId){ await run(`UPDATE sanctions SET active=0 WHERE userId=? AND active=1`,[Number(userId)]); },
+  async _applyWorkedMinutesToBlame(userId, minutes){
+    const sc = await get(`SELECT * FROM sanctions WHERE userId=? AND active=1 AND type IN ('blame1','blame2')`,
+                         [Number(userId)]);
+    if (!sc) return;
+    const newWorked = (sc.worked_minutes || 0) + Math.max(0, parseInt(minutes,10));
+    await run(`UPDATE sanctions SET worked_minutes=? WHERE id=?`, [newWorked, sc.id]);
+    if (sc.required_minutes != null && newWorked >= sc.required_minutes) {
+      await run(`UPDATE sanctions SET active=0 WHERE id=?`, [sc.id]);
+    }
+  },
+
+  // Rapport heures (semaine)
+  async getWeeklyMinutesThisWeek(){
+    const now = new Date();
+    const d = now.getDay();
+    const diffMon = (d === 0 ? -6 : 1 - d);
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffMon); monday.setHours(0,0,0,0);
+    const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6); sunday.setHours(23,59,59,999);
+    const startIso = monday.toISOString().slice(0,19).replace('T',' ');
+    const endIso   = sunday.toISOString().slice(0,19).replace('T',' ');
+
+    const logs = await all(`
+      SELECT l.id,l.userId,l.start_time,l.end_time,u.nomRP,u.matricule
+      FROM service_logs l JOIN users u ON u.id=l.userId
+      WHERE l.end_time IS NOT NULL AND l.start_time >= ? AND l.end_time <= ?
+      ORDER BY u.nomRP ASC
+    `,[startIso,endIso]);
+
+    const per = new Map();
+    for (const log of logs) {
+      const total = await durationMinutes(log.start_time, log.end_time);
+      const p = await pauseMinutesForLog(log.id);
+      const mins = Math.max(0, total - p);
+      if (!per.has(log.userId)) per.set(log.userId,{ nomRP:log.nomRP, matricule:log.matricule, minutes:0 });
+      per.get(log.userId).minutes += mins;
+    }
+    return Array.from(per.values()).sort((a,b)=>a.nomRP.localeCompare(b.nomRP));
+  },
+
+  // Zones & statut
+  setZone(userId, zone){ return run('UPDATE service_status SET zone=? WHERE userId=?',[zone || null, Number(userId)]); },
+  setOpStatus(userId, status){
+    const allowed = ['disponible','intervention','occupe'];
+    const s = allowed.includes(String(status)) ? String(status) : 'disponible';
+    return run('UPDATE service_status SET opStatus=? WHERE userId=?', [s, Number(userId)]);
+  },
+
+  // Dispatch
+  getDispatch(){
+    return all(`SELECT g.id,g.name,g.type,
+                       json_group_array(
+                         CASE WHEN u.id IS NULL THEN NULL
+                              ELSE json_object('userId',u.id,'nomRP',u.nomRP,'matricule',u.matricule)
+                         END
+                       ) AS members
+                FROM dispatch_groups g
+                LEFT JOIN dispatch_assignments da ON da.groupId=g.id
+                LEFT JOIN users u ON u.id=da.userId
+                GROUP BY g.id
+                ORDER BY g.type ASC, g.name ASC`);
+  },
+  createGroup(name, type){ return run('INSERT INTO dispatch_groups (name,type) VALUES (?,?)',[name, type]); },
+  renameGroup(groupId, name){ return run('UPDATE dispatch_groups SET name=? WHERE id=?',[name, Number(groupId)]); },
+  async deleteGroup(groupId){
+    await run('DELETE FROM dispatch_assignments WHERE groupId=?',[Number(groupId)]);
+    await run('DELETE FROM dispatch_groups WHERE id=?',[Number(groupId)]);
+  },
+  assignUser(groupId, userId){ return run('INSERT OR IGNORE INTO dispatch_assignments (groupId,userId) VALUES (?,?)',[Number(groupId),Number(userId)]); },
+  unassignUser(groupId, userId){ return run('DELETE FROM dispatch_assignments WHERE groupId=? AND userId=?',[Number(groupId),Number(userId)]); },
+
+  // Employés + sanction active (minutes)
+  getEmployeesCompact(){
+    return all(`
+      SELECT
+        u.id, u.nomRP, u.matricule,
+        s.type AS sanction_type,
+        s.required_minutes,
+        s.worked_minutes,
+        CASE
+          WHEN s.required_minutes IS NULL THEN NULL
+          ELSE MAX(s.required_minutes - COALESCE(s.worked_minutes,0), 0)
+        END AS remaining_minutes
+      FROM users u
+      LEFT JOIN sanctions s
+        ON s.userId = u.id AND s.active = 1
+      ORDER BY u.nomRP ASC
+    `);
+  },
+
+  // Alerts
+  createAlert(userId, message){
+    return run('INSERT INTO alerts (userId,message,status) VALUES (?,?, "open")', [Number(userId), String(message||'')]);
+  },
+  getOpenAlerts(){
+    return all(`SELECT a.id, a.userId, a.message, a.status, a.created_at,
+                       u.nomRP, u.matricule
+                FROM alerts a
+                JOIN users u ON u.id=a.userId
+                WHERE a.status='open'
+                ORDER BY a.id DESC`);
+  },
+  closeAlert(alertId){
+    return run(`UPDATE alerts SET status='closed', closed_at=datetime('now','localtime') WHERE id=?`, [Number(alertId)]);
+  },
+  // Dernière alerte ouverte NON VIDE (pour la banderole)
+  getLatestOpenAlert(){
+    return get(`
+      SELECT a.id, a.message, a.created_at
+      FROM alerts a
+      WHERE a.status='open' AND a.message IS NOT NULL AND TRIM(a.message) <> ''
+      ORDER BY a.id DESC
+      LIMIT 1
+    `);
+  },
+
+  // === AJOUTS: filtres matricule + reset heures ===
+  _weekBounds: async function(){
+    const now = new Date();
+    const d = now.getDay(); // 0=dim
+    const diffMon = (d === 0 ? -6 : 1 - d);
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffMon);
+    monday.setHours(0,0,0,0);
+    const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+    sunday.setHours(23,59,59,999);
+    const startIso = monday.toISOString().slice(0,19).replace('T',' ');
+    const endIso   = sunday.toISOString().slice(0,19).replace('T',' ');
+    return { startIso, endIso };
+  },
+
+  resetHoursThisWeek: async function(){
+    const { startIso, endIso } = await this._weekBounds();
+    await run(`DELETE FROM service_pauses WHERE logId IN (
+                 SELECT id FROM service_logs WHERE start_time >= ? AND end_time <= ?
+               )`, [startIso, endIso]);
+    await run(`DELETE FROM service_logs WHERE start_time >= ? AND end_time <= ?`, [startIso, endIso]);
+  },
+
+  resetHoursAll: async function(){
+    await run(`DELETE FROM service_pauses`);
+    await run(`DELETE FROM service_logs`);
+  },
+
+  searchUsersByMatricule: function(q){
+    const like = `%${String(q||'').trim()}%`;
+    return all(`SELECT u.*, s.enService, s.enPause, s.typeMission, s.zone, s.opStatus
+                FROM users u LEFT JOIN service_status s ON u.id = s.userId
+                WHERE u.matricule LIKE ?
+                ORDER BY u.isAdmin DESC, u.nomRP ASC`, [like]);
+  },
+
+  getEmployeesCompactByMatricule: function(q){
+    const like = `%${String(q||'').trim()}%`;
+    return all(`
+      SELECT
+        u.id, u.nomRP, u.matricule,
+        s.type AS sanction_type,
+        s.required_minutes,
+        s.worked_minutes,
+        CASE
+          WHEN s.required_minutes IS NULL THEN NULL
+          ELSE MAX(s.required_minutes - COALESCE(s.worked_minutes,0), 0)
+        END AS remaining_minutes
+      FROM users u
+      LEFT JOIN sanctions s
+        ON s.userId = u.id AND s.active = 1
+      WHERE u.matricule LIKE ?
+      ORDER BY u.nomRP ASC
+    `, [like]);
+  },
+
+  // --- SUPPRESSION UTILISATEUR ROBUSTE (transaction + toutes dépendances)
+  async supprimerUser(userId){
+    const id = Number(userId);
+    if (!id) return;
     try {
-      const userId = extractUserId(req.body);
-      if (!userId) {
-        console.warn('[ADMIN DELETE] body reçu =', req.body);
-        req.flash('error', 'ID utilisateur manquant dans le formulaire.');
-        return res.redirect('/admin');
-      }
-      await db.supprimerUser(userId);
-      req.flash('success', 'Utilisateur supprimé.');
+      await run('BEGIN IMMEDIATE');
+      await run('DELETE FROM service_pauses WHERE logId IN (SELECT id FROM service_logs WHERE userId=?)', [id]);
+      await run('DELETE FROM service_logs WHERE userId=?', [id]);
+      await run('DELETE FROM sanctions WHERE userId=?', [id]);
+      await run('DELETE FROM dispatch_assignments WHERE userId=?', [id]);
+      await run('DELETE FROM alerts WHERE userId=?', [id]);
+      await run('DELETE FROM service_status WHERE userId=?', [id]);
+      await run('DELETE FROM users WHERE id=?', [id]);
+      await run('COMMIT');
     } catch (e) {
-      console.error('[ADMIN DELETE ERROR]', e);
-      req.flash('error', 'Impossible de supprimer cet utilisateur.');
+      try { await run('ROLLBACK'); } catch(_) {}
+      throw e;
     }
-    res.redirect('/admin');
   }
-);
-
-// (unique) Appliquer / lever une sanction (Admin)
-app.post('/admin/sanction', checkAdmin, async (req, res) => {
-  try {
-    const { userId, action, type, requiredHours } = req.body;
-    const uid = Number(userId);
-    if (!uid) {
-      req.flash('error', 'ID utilisateur manquant.');
-      return res.redirect('/admin/employes');
-    }
-
-    if (action === 'apply') {
-      let minutes = null;
-      if (type === 'blame1' || type === 'blame2') {
-        const h = Number(requiredHours);
-        if (!isNaN(h) && h >= 0) minutes = Math.round(h * 60);
-      }
-      await db.setSanction(uid, String(type || '').trim(), minutes);
-      req.flash('success', 'Sanction appliquée.');
-    } else if (action === 'clear') {
-      await db.clearSanction(uid);
-      req.flash('success', 'Sanction levée.');
-    } else {
-      req.flash('error', 'Action sanction inconnue.');
-    }
-  } catch (e) {
-    console.error('[SANCTION ERROR]', e);
-    req.flash('error', 'Impossible de modifier la sanction.');
-  }
-  res.redirect('/admin/employes');
-});
-
-// Reset heures (semaine / tout)
-app.post('/admin/heures/reset', checkAdmin, async (req, res) => {
-  try {
-    const { scope } = req.body; // 'week' | 'all'
-    if (scope === 'all') {
-      await db.resetHoursAll();
-      req.flash('success', 'Toutes les heures ont été remises à zéro.');
-    } else {
-      await db.resetHoursThisWeek();
-      req.flash('success', 'Heures de la semaine remises à zéro.');
-    }
-  } catch (e) {
-    console.error('[HEURES RESET ERROR]', e);
-    req.flash('error', 'Impossible de remettre les heures à zéro.');
-  }
-  res.redirect('/admin/heures');
-});
-
-app.post('/admin/action', checkAdmin, async (req, res) => {
-  try {
-    const { userId, action, typeMission } = req.body;
-    if (action === 'changer_mission') {
-      await db.changerTypeMission(userId, typeMission || null);
-      req.flash('success', 'Mission modifiée.');
-    } else if (action === 'forcer_pause') {
-      await db.pauseService(userId);
-      req.flash('success', 'Pause forcée.');
-    } else if (action === 'forcer_fin') {
-      await db.endService(userId);
-      req.flash('success', 'Fin de service forcée.');
-    } else if (action === 'supprimer') {
-      const uid = extractUserId(req.body) || Number(userId);
-      if (!uid) {
-        req.flash('error', 'ID utilisateur manquant.');
-        return res.redirect('/admin');
-      }
-      await db.supprimerUser(uid);
-      req.flash('success', 'Utilisateur supprimé.');
-    }
-    res.redirect('/admin');
-  } catch (e) {
-    console.error('[ADMIN ACTION ERROR]', e);
-    req.flash('error', 'Action admin impossible.');
-    res.redirect('/admin');
-  }
-});
-
-// ====== DISPATCH ======
-// Lecture seule pour tous les connectés
-app.get('/dispatch', checkAuth, async (req, res) => {
-  try {
-    const [groups, enService, allUsers, alerts] = await Promise.all([
-      db.getDispatch(),
-      db.getUsersEnService(),
-      db.getAllUsers(),
-      db.getOpenAlerts()
-    ]);
-    res.render('dispatch', { groups, enService, allUsers, alerts });
-  } catch (e) {
-    console.error('[DISPATCH GET ERROR]', e);
-    req.flash('error', 'Erreur chargement dispatch.');
-    res.redirect('/dashboard');
-  }
-});
-
-// Modifs dispatch: ADMIN uniquement
-app.post('/dispatch/group', checkAdmin, async (req, res) => {
-  try {
-    const { op, type, name, groupId } = req.body;
-    if (op === 'create') {
-      if (!name || !type) {
-        req.flash('error', 'Nom et type requis.');
-        return res.redirect('/dispatch');
-      }
-      await db.createGroup(String(name).trim(), String(type).trim());
-      req.flash('success', 'Groupe créé.');
-    } else if (op === 'rename') {
-      await db.renameGroup(groupId, String(name || '').trim());
-      req.flash('success', 'Groupe renommé.');
-    } else if (op === 'delete') {
-      await db.deleteGroup(groupId);
-      req.flash('success', 'Groupe supprimé.');
-    }
-    res.redirect('/dispatch');
-  } catch (e) {
-    console.error('[DISPATCH GROUP ERROR]', e);
-    req.flash('error', 'Erreur groupe.');
-    res.redirect('/dispatch');
-  }
-});
-
-app.post('/dispatch/assign', checkAdmin, async (req, res) => {
-  try {
-    const { op, groupId, userId } = req.body;
-    if (op === 'add') {
-      await db.assignUser(groupId, userId);
-      req.flash('success', 'Agent ajouté au groupe.');
-    } else if (op === 'remove') {
-      await db.unassignUser(groupId, userId);
-      req.flash('success', 'Agent retiré du groupe.');
-    }
-    res.redirect('/dispatch');
-  } catch (e) {
-    console.error('[DISPATCH ASSIGN ERROR]', e);
-    req.flash('error', 'Erreur affectation.');
-    res.redirect('/dispatch');
-  }
-});
-
-app.post('/dispatch/zone', checkAdmin, async (req, res) => {
-  try {
-    const { userId, zone } = req.body;
-    await db.setZone(userId, zone && zone.trim() ? zone.trim() : null);
-    req.flash('success', 'Zone enregistrée.');
-    res.redirect('/dispatch');
-  } catch (e) {
-    console.error('[DISPATCH ZONE ERROR]', e);
-    req.flash('error', 'Erreur zone.');
-    res.redirect('/dispatch');
-  }
-});
-
-// ====== ALERTES ======
-// Envoi alerte (admin) — JSON si AJAX, sinon redirect vers la page d’origine
-app.post('/alert', checkAdmin, async (req, res) => {
-  try {
-    const { message } = req.body || {};
-    await db.createAlert(req.session.user.id, String(message || ''));
-
-    const wantsJSON =
-      (req.headers['accept'] && req.headers['accept'].includes('application/json')) ||
-      req.headers['x-requested-with'] === 'fetch' ||
-      (req.headers['content-type'] || '').includes('application/json');
-
-    if (wantsJSON) return res.json({ ok: true });
-
-    req.flash('success', 'Alerte envoyée.');
-    res.redirect(req.get('referer') || '/dashboard');
-  } catch (e) {
-    console.error('[ALERT CREATE ERROR]', e);
-
-    const wantsJSON =
-      (req.headers['accept'] && req.headers['accept'].includes('application/json')) ||
-      req.headers['x-requested-with'] === 'fetch' ||
-      (req.headers['content-type'] || '').includes('application/json');
-
-    if (wantsJSON) return res.status(500).json({ ok: false, error: 'server' });
-
-    req.flash('error', 'Impossible d’envoyer l’alerte.');
-    res.redirect(req.get('referer') || '/dashboard');
-  }
-});
-
-// Fermer une alerte (admin)
-app.post('/alert/close', checkAdmin, async (req, res) => {
-  try {
-    const { alertId } = req.body;
-    await db.closeAlert(alertId);
-    req.flash('success', 'Alerte fermée.');
-  } catch (e) {
-    console.error('[ALERT CLOSE ERROR]', e);
-    req.flash('error', 'Impossible de fermer l’alerte.');
-  }
-  res.redirect(req.get('referer') || '/dashboard');
-});
-
-// Poll JSON: renvoie SEULEMENT une alerte plus récente que sinceId et non vide
-app.get('/alerts/poll', checkAuth, async (req, res) => {
-  try {
-    const since = Number(req.query.sinceId || 0);
-    const a = await db.getLatestOpenAlert();
-    if (!a || !(a.id > since) || !a.message || !a.message.trim()) return res.json({});
-    return res.json({ id: a.id, message: a.message.trim(), created_at: a.created_at });
-  } catch (e) {
-    return res.json({});
-  }
-});
-
-// ====== START ======
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`[OK] Serveur Bobcat Security sur http://localhost:${PORT}`);
-});
+};
