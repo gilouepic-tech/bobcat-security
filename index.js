@@ -261,6 +261,61 @@ app.get('/admin/heures', checkAdmin, async (req,res)=>{
   }
 });
 
+// --- SUPPRESSION UTILISATEUR (accepte plusieurs URLs pour compat) ---
+app.post(['/admin/user/delete', '/admin/delete', '/admin/supprimer'], checkAdmin, async (req, res) => {
+  try {
+    const userId = Number(req.body.userId);
+    if (!userId) {
+      req.flash('error', 'ID utilisateur manquant.');
+      return res.redirect('/admin');
+    }
+    await db.supprimerUser(userId);
+    req.flash('success', 'Utilisateur supprimé.');
+  } catch (e) {
+    console.error('[ADMIN DELETE ERROR]', e);
+    req.flash('error', 'Impossible de supprimer cet utilisateur.');
+  }
+  res.redirect('/admin');
+});
+// --- SANCTIONS (appliquer / lever) ---
+app.post('/admin/sanction', checkAdmin, async (req, res) => {
+  try {
+    const userId = Number(req.body.userId);
+    const action = String(req.body.action || '');
+    if (!userId) {
+      req.flash('error', 'ID utilisateur manquant.');
+      return res.redirect('/admin/employes');
+    }
+
+    if (action === 'clear') {
+      await db.clearSanction(userId);
+      req.flash('success', 'Sanction levée.');
+      return res.redirect('/admin/employes');
+    }
+
+    if (action === 'apply') {
+      const type = String(req.body.type || '').trim(); // rappel | blame1 | blame2 | suspension
+      // Le formulaire envoie "requiredHours" (heures décimales). On convertit en minutes seulement pour blâmes.
+      let requiredMinutes = null;
+      const rawHours = req.body.requiredHours;
+      if ((type === 'blame1' || type === 'blame2') && rawHours !== undefined && rawHours !== null && String(rawHours).trim() !== '') {
+        const h = parseFloat(rawHours);
+        if (!isNaN(h) && h >= 0) requiredMinutes = Math.round(h * 60);
+      }
+      await db.setSanction(userId, type, requiredMinutes);
+      req.flash('success', 'Sanction appliquée.');
+      return res.redirect('/admin/employes');
+    }
+
+    req.flash('error', 'Action sanction inconnue.');
+    res.redirect('/admin/employes');
+  } catch (e) {
+    console.error('[ADMIN SANCTION ERROR]', e);
+    req.flash('error', 'Impossible de traiter la sanction.');
+    res.redirect('/admin/employes');
+  }
+});
+
 // (NOUVEAU) reset heures (semaine / tout)
 app.post('/admin/heures/reset', checkAdmin, async (req,res)=>{
   try{
