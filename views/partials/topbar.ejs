@@ -14,13 +14,15 @@
 
   <div class="right">
     <span class="muted" style="margin-right:10px;"><%= user ? user.nomRP : '' %></span>
+
     <% if (user && user.isAdmin) { %>
-      <form id="alert-form" action="/alert" method="POST" class="inline">
-        <input type="text" name="message" placeholder="Alerte rapide…" required
-               style="min-width:220px" />
+      <!-- Formulaire alerte (admin uniquement) -->
+      <form id="alert-form" action="/alert" method="POST" class="inline" style="margin-right:8px;">
+        <input type="text" name="message" placeholder="Alerte rapide…" required style="min-width:220px" />
         <button type="submit" class="btn danger">Envoyer alerte</button>
       </form>
     <% } %>
+
     <a href="/logout" class="btn">Déconnexion</a>
   </div>
 </header>
@@ -34,129 +36,5 @@
   </div>
 </div>
 
-<script>
-(function(){
-  const isAdmin = <%= (user && user.isAdmin) ? 'true' : 'false' %>;
-  const banner  = document.getElementById('global-alert');
-  const btnClose= document.getElementById('alert-close');
-  const msgSpan = banner.querySelector('.msg');
-  let lastId = Number(localStorage.getItem('bobcat:lastAlertId') || 0);
-  let canClose = false;
-
-  // son court sans fichier
-  function beep(){
-    try{
-      const ctx = new (window.AudioContext||window.webkitAudioContext)();
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type='triangle'; o.frequency.value=880;
-      o.connect(g); g.connect(ctx.destination);
-      g.gain.setValueAtTime(0.06, ctx.currentTime);
-      o.start(); o.stop(ctx.currentTime + 0.18);
-    }catch(_){}
-  }
-
-  function show(text){
-    msgSpan.textContent = text || '';
-    banner.hidden = false;
-    banner.classList.add('show');
-    canClose = false;
-    btnClose.disabled = true;
-    btnClose.classList.remove('ready');
-    setTimeout(()=>{ canClose = true; btnClose.disabled = false; btnClose.classList.add('ready'); }, 10000);
-  }
-
-  if (btnClose){
-    btnClose.addEventListener('click', (e)=>{
-      e.preventDefault();
-      if (!canClose) return;
-      banner.classList.remove('show');
-      banner.hidden = true;
-    });
-  }
-
-  async function poll(){
-    try{
-      const r = await fetch('/alerts/poll?sinceId='+lastId, { headers:{'Accept':'application/json'} });
-      const a = await r.json();
-      if (a && a.id && a.id > lastId){
-        lastId = a.id;
-        localStorage.setItem('bobcat:lastAlertId', String(lastId));
-        show(a.message);
-        beep();
-      }
-    }catch(_){}
-    setTimeout(poll, 4000);
-  }
-  poll();
-
-  // envoi AJAX (évite redirections)
-  const form = document.getElementById('alert-form');
-  if (isAdmin && form){
-    form.addEventListener('submit', async (e)=>{
-      e.preventDefault();
-      const fd = new FormData(form);
-      const res = await fetch('/alert', { method:'POST', body: fd, headers:{'Accept':'application/json'} });
-      if (res.ok) form.reset();
-    });
-  }
-})();
-</script>
-
-// public/js/topbar.js — ReadyToPaste
-(function(){
-  const banner  = document.getElementById('global-alert');
-  if (!banner) return;
-
-  const btnClose= document.getElementById('alert-close');
-  const msgSpan = banner.querySelector('.msg');
-  let lastId = Number(localStorage.getItem('bobcat:lastAlertId') || 0);
-  let canClose = false;
-
-  function beep(){
-    try{
-      const ctx = new (window.AudioContext||window.webkitAudioContext)();
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type='triangle'; o.frequency.value=880;
-      o.connect(g); g.connect(ctx.destination);
-      g.gain.setValueAtTime(0.06, ctx.currentTime);
-      o.start(); o.stop(ctx.currentTime + 0.18);
-    }catch(_){}
-  }
-
-  function show(text){
-    if (!text || String(text).trim()==='') return;
-    msgSpan.textContent = text.trim();
-    banner.hidden = false;
-    banner.classList.add('show');
-    canClose = false;
-    if (btnClose){
-      btnClose.disabled = true;
-      btnClose.classList.remove('ready');
-      setTimeout(()=>{ canClose = true; btnClose.disabled = false; btnClose.classList.add('ready'); }, 10000);
-    }
-  }
-
-  if (btnClose){
-    btnClose.addEventListener('click', (e)=>{
-      e.preventDefault();
-      if (!canClose) return;
-      banner.classList.remove('show');
-      banner.hidden = true;
-    });
-  }
-
-  async function poll(){
-    try{
-      const r = await fetch('/alerts/poll?sinceId='+lastId, { headers:{'Accept':'application/json'} });
-      const a = await r.json();
-      if (a && a.id && a.id > lastId && a.message && a.message.trim()!==''){
-        lastId = a.id;
-        localStorage.setItem('bobcat:lastAlertId', String(lastId));
-        show(a.message);
-        beep();
-      }
-    }catch(_){}
-    setTimeout(poll, 4000);
-  }
-  poll();
-})();
+<!-- Charge UNIQUEMENT le fichier JS, ne rien coller ici -->
+<script src="/js/topbar.js"></script>

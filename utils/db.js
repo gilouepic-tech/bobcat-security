@@ -321,43 +321,29 @@ module.exports = {
   createAlert(userId, message){
     return run('INSERT INTO alerts (userId,message,status) VALUES (?,?, "open")', [Number(userId), String(message||'')]);
   },
- // ==> Remplacer UNIQUEMENT cette fonction dans module.exports
-getLatestOpenAlert(){
-  return get(`
-    SELECT a.id, a.message, a.created_at
-    FROM alerts a
-    WHERE a.status='open' AND a.message IS NOT NULL AND TRIM(a.message) <> ''
-    ORDER BY a.id DESC
-    LIMIT 1
-  `);
-},
-
+  getOpenAlerts(){
+    return all(`SELECT a.id, a.userId, a.message, a.status, a.created_at,
+                       u.nomRP, u.matricule
+                FROM alerts a
+                JOIN users u ON u.id=a.userId
+                WHERE a.status='open'
+                ORDER BY a.id DESC`);
+  },
   closeAlert(alertId){
     return run(`UPDATE alerts SET status='closed', closed_at=datetime('now','localtime') WHERE id=?`, [Number(alertId)]);
   },
-  // Dernière alerte ouverte (bandeau)
+  // Dernière alerte ouverte NON VIDE (pour la banderole)
   getLatestOpenAlert(){
     return get(`
       SELECT a.id, a.message, a.created_at
       FROM alerts a
-      WHERE a.status='open'
+      WHERE a.status='open' AND a.message IS NOT NULL AND TRIM(a.message) <> ''
       ORDER BY a.id DESC
       LIMIT 1
     `);
   },
 
-  // Admin helpers
-  changerTypeMission(userId, typeMission){ return run('UPDATE service_status SET typeMission=? WHERE userId=?',[typeMission || null, Number(userId)]); },
-  async supprimerUser(userId){
-    await run('DELETE FROM service_pauses WHERE logId IN (SELECT id FROM service_logs WHERE userId=?)',[Number(userId)]);
-    await run('DELETE FROM service_logs WHERE userId=?',[Number(userId)]);
-    await run('DELETE FROM sanctions WHERE userId=?',[Number(userId)]);
-    await run('DELETE FROM dispatch_assignments WHERE userId=?',[Number(userId)]);
-    await run('DELETE FROM service_status WHERE userId=?',[Number(userId)]);
-    await run('DELETE FROM users WHERE id=?',[Number(userId)]);
-  },
-
-  // === AJOUTS: filtres matricule + reset heures (version sûre) ===
+  // === AJOUTS: filtres matricule + reset heures ===
   _weekBounds: async function(){
     const now = new Date();
     const d = now.getDay(); // 0=dim
@@ -372,9 +358,7 @@ getLatestOpenAlert(){
   },
 
   resetHoursThisWeek: async function(){
-    const bounds = await this._weekBounds();
-    const startIso = bounds.startIso;
-    const endIso = bounds.endIso;
+    const { startIso, endIso } = await this._weekBounds();
     await run(`DELETE FROM service_pauses WHERE logId IN (
                  SELECT id FROM service_logs WHERE start_time >= ? AND end_time <= ?
                )`, [startIso, endIso]);
