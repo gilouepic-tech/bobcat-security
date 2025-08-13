@@ -330,5 +330,92 @@ module.exports = {
                 ORDER BY a.id DESC`);
   },
   closeAlert(alertId){
-    return run(`UPDATE alerts SET status='closed',
+    return run(`UPDATE alerts SET status='closed', closed_at=datetime('now','localtime') WHERE id=?`, [Number(alertId)]);
+  },
+  // Dernière alerte ouverte NON VIDE (pour la banderole)
+  getLatestOpenAlert(){
+    return get(`
+      SELECT a.id, a.message, a.created_at
+      FROM alerts a
+      WHERE a.status='open' AND a.message IS NOT NULL AND TRIM(a.message) <> ''
+      ORDER BY a.id DESC
+      LIMIT 1
+    `);
+  },
+
+  // === AJOUTS: filtres matricule + reset heures ===
+  _weekBounds: async function(){
+    const now = new Date();
+    const d = now.getDay(); // 0=dim
+    const diffMon = (d === 0 ? -6 : 1 - d);
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffMon);
+    monday.setHours(0,0,0,0);
+    const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+    sunday.setHours(23,59,59,999);
+    const startIso = monday.toISOString().slice(0,19).replace('T',' ');
+    const endIso   = sunday.toISOString().slice(0,19).replace('T',' ');
+    return { startIso, endIso };
+  },
+
+  resetHoursThisWeek: async function(){
+    const { startIso, endIso } = await this._weekBounds();
+    await run(`DELETE FROM service_pauses WHERE logId IN (
+                 SELECT id FROM service_logs WHERE start_time >= ? AND end_time <= ?
+               )`, [startIso, endIso]);
+    await run(`DELETE FROM service_logs WHERE start_time >= ? AND end_time <= ?`, [startIso, endIso]);
+  },
+
+  resetHoursAll: async function(){
+    await run(`DELETE FROM service_pauses`);
+    await run(`DELETE FROM service_logs`);
+  },
+
+  searchUsersByMatricule: function(q){
+    const like = `%${String(q||'').trim()}%`;
+    return all(`SELECT u.*, s.enService, s.enPause, s.typeMission, s.zone, s.opStatus
+                FROM users u LEFT JOIN service_status s ON u.id = s.userId
+                WHERE u.matricule LIKE ?
+                ORDER BY u.isAdmin DESC, u.nomRP ASC`, [like]);
+  },
+
+  getEmployeesCompactByMatricule: function(q){
+    const like = `%${String(q||'').trim()}%`;
+    return all(`
+      SELECT
+        u.id, u.nomRP, u.matricule,
+        s.type AS sanction_type,
+        s.required_minutes,
+        s.worked_minutes,
+        CASE
+          WHEN s.required_minutes IS NULL THEN NULL
+          ELSE MAX(s.required_minutes - COALESCE(s.worked_minutes,0), 0)
+        END AS remaining_minutes
+      FROM users u
+      LEFT JOIN sanctions s
+        ON s.userId = u.id AND s.active = 1
+      WHERE u.matricule LIKE ?
+      ORDER BY u.nomRP ASC
+    `, [like]);
+  },
+
+  // --- SUPPRESSION UTILISATEUR ROBUSTE (transaction + toutes dépendances)
+  async supprimerUser(userId){
+    const id = Number(userId);
+    if (!id) return;
+    try {
+      await run('BEGIN IMMEDIATE');
+      await run('DELETE FROM service_pauses WHERE logId IN (SELECT id FROM service_logs WHERE userId=?)', [id]);
+      await run('DELETE FROM service_logs WHERE userId=?', [id]);
+      await run('DELETE FROM sanctions WHERE userId=?', [id]);
+      await run('DELETE FROM dispatch_assignments WHERE userId=?', [id]);
+      await run('DELETE FROM alerts WHERE userId=?', [id]);
+      await run('DELETE FROM service_status WHERE userId=?', [id]);
+      await run('DELETE FROM users WHERE id=?', [id]);
+      await run('COMMIT');
+    } catch (e) {
+      try { await run('ROLLBACK'); } catch(_) {}
+      throw e;
+    }
+  }
+};
 
